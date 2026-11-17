@@ -1,0 +1,39 @@
+name: Deploy Spring Boot API
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build jar
+        run: |
+          chmod +x gradlew
+          ./gradlew bootJar -x test
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload jar
+        run: |
+          JAR=$(ls build/libs/*.jar | grep -v plain | head -n 1)
+          scp -i ~/.ssh/deploy_key -P "${{ secrets.VPS_PORT }}" \
+            "$JAR" \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/home/deploy/honey-api/app.jar.new"
