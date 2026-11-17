@@ -36,4 +36,4 @@ jobs:
           JAR=$(ls build/libs/*.jar | grep -v plain | head -n 1)
           scp -i ~/.ssh/deploy_key -P "${{ secrets.VPS_PORT }}" \
             "$JAR" \
-            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/home/deploy/honey-api/app.jar.new"
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/root/honey-api/app.jar.new"
