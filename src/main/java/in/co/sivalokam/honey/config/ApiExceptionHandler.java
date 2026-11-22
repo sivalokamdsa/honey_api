@@ -1,5 +1,6 @@
 package in.co.sivalokam.honey.config;
 
+import in.co.sivalokam.honey.common.ApiException;
 import in.co.sivalokam.honey.registrations.DuplicateRegistrationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,15 @@ public class ApiExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
 
+    // Expected business errors (unknown product, out of stock, bad signature, ...)
+    @ExceptionHandler(ApiException.class)
+    public ProblemDetail handleApi(ApiException ex) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(ex.getStatus(), ex.getMessage());
+        pd.setTitle(ex.getStatus().getReasonPhrase());
+        pd.setProperty("errors", ex.getErrors());
+        return pd;
+    }
+
     // 400 – a field broke a rule (@NotBlank, @Pattern, ...)
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ProblemDetail handleValidation(MethodArgumentNotValidException ex) {
@@ -41,6 +51,7 @@ public class ApiExceptionHandler {
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST,
                 "Request body is missing or is not valid JSON");
         pd.setTitle("Malformed request");
+        pd.setProperty("errors", Map.of());
         return pd;
     }
 
@@ -69,6 +80,7 @@ public class ApiExceptionHandler {
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.INTERNAL_SERVER_ERROR,
                 "Something went wrong. Please try again.");
         pd.setTitle("Internal error");
+        pd.setProperty("errors", Map.of());
         return pd;
     }
 }
