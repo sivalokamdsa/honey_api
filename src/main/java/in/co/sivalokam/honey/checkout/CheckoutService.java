@@ -62,7 +62,7 @@ public class CheckoutService {
         Map<String, Product> byId = new HashMap<>();
         products.findAllById(ids).forEach(p -> byId.put(p.getId(), p));
 
-        for (int i = 0; i < items.size(); i++) {
+            for (int i = 0; i < items.size(); i++) {
             String field = "items[" + i + "].productId";
             Product p = byId.get(items.get(i).productId());
             if (p == null) {
