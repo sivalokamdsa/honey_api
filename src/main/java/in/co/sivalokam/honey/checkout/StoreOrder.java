@@ -18,6 +18,10 @@ public class StoreOrder {
     @Column(nullable = false, length = 20)
     private OrderStatus status;
 
+    /** The registration that placed the order. Null only for orders created before login was required. */
+    @Column(name = "registration_id")
+    private UUID registrationId;
+
     @Column(name = "customer_name", nullable = false, length = 100)
     private String customerName;
 
@@ -55,10 +59,11 @@ public class StoreOrder {
         // required by JPA
     }
 
-    public StoreOrder(UUID id, String customerName, String customerPhone, String customerEmail,
+    public StoreOrder(UUID id, UUID registrationId, String customerName, String customerPhone, String customerEmail,
                       String currency, int subtotalPaise, int discountPaise, int totalPaise,
                       String razorpayOrderId, OffsetDateTime createdAt) {
         this.id = id;
+        this.registrationId = registrationId;
         this.status = OrderStatus.CREATED;
         this.customerName = customerName;
         this.customerPhone = customerPhone;
@@ -71,6 +76,10 @@ public class StoreOrder {
         this.createdAt = createdAt;
     }
 
+    public boolean isOwnedBy(UUID registrationId) {
+        return this.registrationId != null && this.registrationId.equals(registrationId);
+    }
+
     public void addItem(StoreOrderItem item) {
         items.add(item);
     }
@@ -81,6 +90,7 @@ public class StoreOrder {
     }
 
     public UUID getId() { return id; }
+    public UUID getRegistrationId() { return registrationId; }
     public OrderStatus getStatus() { return status; }
     public String getCustomerName() { return customerName; }
     public String getCustomerPhone() { return customerPhone; }

@@ -58,6 +58,17 @@ public class RegistrationService {
         }
     }
 
+    /**
+     * Backend-only: changes a registration's role, e.g. to promote a user to ADMIN.
+     * No HTTP endpoint calls this.
+     */
+    @Transactional
+    public void changeRole(String phone, Role role) {
+        Registration registration = repository.findByPhone(normalizePhone(phone))
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Registration not found"));
+        registration.changeRole(role);
+    }
+
     static String normalizePhone(String raw) {
         return PhoneNumbers.normalize(raw);
     }

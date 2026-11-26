@@ -25,6 +25,7 @@ import static org.mockito.Mockito.*;
 class CheckoutServiceTest {
 
     private static final String KEY_SECRET = "test_secret";
+    private static final UUID CUSTOMER = UUID.randomUUID();
 
     private ProductRepository products;
     private StoreOrderRepository orders;
@@ -63,12 +64,17 @@ class CheckoutServiceTest {
                 new CheckoutRequest.CustomerRequest("Asha Rao", "9876543210", "Asha@Example.com"));
     }
 
+    private static StoreOrder orderOwnedBy(UUID id, UUID owner) {
+        return new StoreOrder(id, owner, "Asha Rao", "+919876543210", null, "INR",
+                45000, 0, 45000, "order_XYZ", java.time.OffsetDateTime.now());
+    }
+
     @Test
     void pricesFromServerAndCreatesRazorpayOrderInInr() {
         when(razorpay.createOrder(anyInt(), anyString(), anyString())).thenReturn("order_XYZ");
 
         CheckoutOrderResponse res = service.createOrder(
-                request(List.of(new CheckoutRequest.CartItemRequest("honey-1l", 2))));
+                request(List.of(new CheckoutRequest.CartItemRequest("honey-1l", 2))), CUSTOMER);
 
         assertThat(res.subtotalPaise()).isEqualTo(90000);
         assertThat(res.discountPaise()).isZero();
@@ -83,7 +89,7 @@ class CheckoutServiceTest {
     @Test
     void rejectsUnknownProduct() {
         assertThatThrownBy(() -> service.createOrder(
-                request(List.of(new CheckoutRequest.CartItemRequest("nope", 1)))))
+                request(List.of(new CheckoutRequest.CartItemRequest("nope", 1))), CUSTOMER))
                 .isInstanceOfSatisfying(ApiException.class, e -> {
                     assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
                     assertThat(e.getErrors()).containsEntry("items[0].productId", "Unknown product");
@@ -95,7 +101,7 @@ class CheckoutServiceTest {
     @Test
     void rejectsOutOfStockProductServerSide() {
         assertThatThrownBy(() -> service.createOrder(
-                request(List.of(new CheckoutRequest.CartItemRequest("honey-5l", 1)))))
+                request(List.of(new CheckoutRequest.CartItemRequest("honey-5l", 1))), CUSTOMER))
                 .isInstanceOfSatisfying(ApiException.class, e ->
                         assertThat(e.getErrors()).containsEntry("items[0].productId",
                                 "Pure Honey — 5 Litre is out of stock"));
@@ -106,7 +112,7 @@ class CheckoutServiceTest {
     void rejectsDuplicateProductLines() {
         assertThatThrownBy(() -> service.createOrder(request(List.of(
                 new CheckoutRequest.CartItemRequest("honey-1l", 1),
-                new CheckoutRequest.CartItemRequest("honey-1l", 1)))))
+                new CheckoutRequest.CartItemRequest("honey-1l", 1))), CUSTOMER))
                 .isInstanceOfSatisfying(ApiException.class, e ->
                         assertThat(e.getErrors()).containsKey("items[1].productId"));
     }
@@ -117,7 +123,7 @@ class CheckoutServiceTest {
                 .thenThrow(new IllegalStateException("boom"));
 
         assertThatThrownBy(() -> service.createOrder(
-                request(List.of(new CheckoutRequest.CartItemRequest("honey-1l", 1)))))
+                request(List.of(new CheckoutRequest.CartItemRequest("honey-1l", 1))), CUSTOMER))
                 .isInstanceOfSatisfying(ApiException.class, e ->
                         assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY));
         verify(orders, never()).save(any());
@@ -129,20 +135,31 @@ class CheckoutServiceTest {
         when(orders.findById(id)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.verifyPayment(
-                new VerifyPaymentRequest(id, "order_XYZ", "pay_1", "sig")))
+                new VerifyPaymentRequest(id, "order_XYZ", "pay_1", "sig"), CUSTOMER))
                 .isInstanceOfSatisfying(ApiException.class, e ->
                         assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
     }
 
     @Test
-    void verifyRejectsBadSignatureWithoutRecording() {
+    void verifyReportsAnotherCustomersOrderAsNotFound() {
         UUID id = UUID.randomUUID();
-        StoreOrder order = new StoreOrder(id, "Asha Rao", "+919876543210", null, "INR",
-                45000, 0, 45000, "order_XYZ", java.time.OffsetDateTime.now());
-        when(orders.findById(id)).thenReturn(Optional.of(order));
+        when(orders.findById(id)).thenReturn(Optional.of(orderOwnedBy(id, UUID.randomUUID())));
+        String sig = RazorpaySignatures.hmacSha256Hex("order_XYZ|pay_1", KEY_SECRET);
 
         assertThatThrownBy(() -> service.verifyPayment(
-                new VerifyPaymentRequest(id, "order_XYZ", "pay_1", "deadbeef")))
+                new VerifyPaymentRequest(id, "order_XYZ", "pay_1", sig), CUSTOMER))
+                .isInstanceOfSatisfying(ApiException.class, e ->
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
+        verifyNoInteractions(recorder);
+    }
+
+    @Test
+    void verifyRejectsBadSignatureWithoutRecording() {
+        UUID id = UUID.randomUUID();
+        when(orders.findById(id)).thenReturn(Optional.of(orderOwnedBy(id, CUSTOMER)));
+
+        assertThatThrownBy(() -> service.verifyPayment(
+                new VerifyPaymentRequest(id, "order_XYZ", "pay_1", "deadbeef"), CUSTOMER))
                 .isInstanceOfSatisfying(ApiException.class, e ->
                         assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
         verifyNoInteractions(recorder);
@@ -151,13 +168,11 @@ class CheckoutServiceTest {
     @Test
     void verifyRecordsPaymentForValidSignature() {
         UUID id = UUID.randomUUID();
-        StoreOrder order = new StoreOrder(id, "Asha Rao", "+919876543210", null, "INR",
-                45000, 0, 45000, "order_XYZ", java.time.OffsetDateTime.now());
-        when(orders.findById(id)).thenReturn(Optional.of(order));
+        when(orders.findById(id)).thenReturn(Optional.of(orderOwnedBy(id, CUSTOMER)));
         String sig = RazorpaySignatures.hmacSha256Hex("order_XYZ|pay_1", KEY_SECRET);
 
         VerifyPaymentResponse res = service.verifyPayment(
-                new VerifyPaymentRequest(id, "order_XYZ", "pay_1", sig));
+                new VerifyPaymentRequest(id, "order_XYZ", "pay_1", sig), CUSTOMER);
 
         assertThat(res).isEqualTo(new VerifyPaymentResponse("paid", id, "pay_1"));
         verify(recorder).recordPaid(id, "pay_1", 45000, PaymentSource.VERIFY, sig);

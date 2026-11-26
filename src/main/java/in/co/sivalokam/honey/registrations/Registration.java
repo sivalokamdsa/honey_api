@@ -3,6 +3,7 @@ package in.co.sivalokam.honey.registrations;
 import jakarta.persistence.*;
 
 import java.time.OffsetDateTime;
+import java.util.Objects;
 import java.util.UUID;
 
 @Entity
@@ -34,6 +35,10 @@ public class Registration {
     @Column(name = "password_hash", length = 100)
     private String passwordHash;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private Role role;
+
 
     protected Registration() {
         // required by JPA
@@ -48,6 +53,13 @@ public class Registration {
         this.passwordHash = passwordHash;
         this.consentAt = now;
         this.createdAt = now;
+        // Clients cannot choose a role. Admins are granted later by the backend.
+        this.role = Role.USER;
+    }
+
+    /** Backend-only. Not reachable from any request DTO. */
+    public void changeRole(Role role) {
+        this.role = Objects.requireNonNull(role, "role");
     }
     public UUID getId() { return id; }
     public String getFullName() { return fullName; }
@@ -57,5 +69,6 @@ public class Registration {
     public String getPasswordHash() { return passwordHash; }
     public OffsetDateTime getConsentAt() { return consentAt; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
+    public Role getRole() { return role; }
 
 }

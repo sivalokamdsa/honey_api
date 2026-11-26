@@ -48,7 +48,7 @@ Errors:
 
 ### Login
 
-**`POST /api/v1/auth/login`** — checks a phone number and password. It issues no token or session.
+**`POST /api/v1/auth/login`** — checks a phone number and password and starts a session. Public.
 
 Request:
 
@@ -59,12 +59,33 @@ Request:
 Response `200 OK`:
 
 ```json
-{ "id": "3f2c1e0a-…", "fullName": "Asha Rao", "phone": "+919876543210" }
+{
+  "id": "3f2c1e0a-…",
+  "fullName": "Asha Rao",
+  "phone": "+919876543210",
+  "role": "USER",
+  "token": "q2X…",
+  "expiresAt": "2026-01-31T00:00:00Z"
+}
 ```
+
+`token` is shown only in this response. Send it on later requests as `Authorization: Bearer <token>`. Only a SHA-256 hash of the token is stored. Sessions last `HONEY_SESSION_TTL_DAYS` days (default 30).
 
 Errors:
 - `400`: `phone` or `password` is missing.
 - `401` with `detail: "Invalid phone or password"`: unknown phone, wrong password, or a registration created before passwords existed. The message is the same in all three cases.
+
+**`POST /api/v1/auth/logout`** — requires a token. Ends the session of that token. Returns `204 No Content`.
+
+### Authorization
+
+- Public: `POST /registrations`, `POST /auth/login`, `POST /webhooks/razorpay`, `GET /products`, `/actuator/health`, `/actuator/info`.
+- Logged in (any role): `/checkout/**`, `POST /auth/logout`.
+- `ADMIN` only: `/api/v1/admin/**` (no endpoints yet).
+- Any other path needs a login.
+- A missing or invalid token returns `401` (`detail: "Please log in to continue"`). A logged-in user without the required role returns `403`.
+- Roles are read from the database on each request, so a role change takes effect on the next request.
+- Registration always creates a `USER`. The role cannot be set through the API. Admins are granted from the backend: `RegistrationService.changeRole`, or on startup by setting `HONEY_ADMIN_BOOTSTRAP_PHONE` to a registered phone.
 
 ### Products
 
@@ -87,7 +108,7 @@ Response `200 OK`:
 
 ### Checkout
 
-**`POST /api/v1/checkout/orders`** — prices the cart from the database, checks stock, creates a Razorpay order, and stores an internal order with status `created`.
+**`POST /api/v1/checkout/orders`** — requires a login. Prices the cart from the database, checks stock, creates a Razorpay order, and stores an internal order with status `created` owned by the logged-in registration.
 
 Request:
 
@@ -126,7 +147,7 @@ Errors:
 - `400`: validation failure, or `errors` keyed by `items[i].productId` with `Unknown product`, `<name> is out of stock`, or `Each product can appear only once`.
 - `502`: Razorpay order creation failed (`detail: "We couldn't start your payment. Please try again."`).
 
-**`POST /api/v1/checkout/verify`** — checks the Razorpay payment signature and marks the order paid. Safe to call repeatedly for the same payment.
+**`POST /api/v1/checkout/verify`** — requires a login. Checks the Razorpay payment signature and marks the order paid. Safe to call repeatedly for the same payment. Only the customer who placed the order can verify it.
 
 Request:
 
@@ -147,7 +168,7 @@ Response `200 OK`:
 
 Errors:
 - `400`: validation failure; `razorpayOrderId` does not match the order; the signature does not match (`errors.razorpaySignature`); or the payment amount does not match the order total.
-- `404`: order not found.
+- `404`: order not found, or it belongs to another customer (the two cases look the same on purpose).
 - `409`: the order is already paid by a different payment, or this payment belongs to a different order.
 
 ### Razorpay webhook
@@ -188,6 +209,8 @@ Configuration values that come from the environment:
 - `DB_USER` / `DB_PASSWORD` (see above)
 - `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` (default empty)
 - `RAZORPAY_BASE_URL` (default `https://api.razorpay.com`)
+- `HONEY_SESSION_TTL_DAYS` (default 30): how long a login token stays valid
+- `HONEY_ADMIN_BOOTSTRAP_PHONE` (default empty): registered phone to promote to `ADMIN` on startup
 
 Never hard-code secrets in `application.properties`.
 
@@ -206,9 +229,16 @@ Never hard-code secrets in `application.properties`.
 - The webhook takes `@RequestBody String` on purpose: the signature is computed over the exact bytes. Do not switch it to a deserialized body.
 - Money is stored as `int` paise everywhere. Currency is INR.
 
+**Auth** (`auth/`, `config/SecurityConfig`):
+
+- Spring Security with a stateless filter chain. Login creates an opaque random token and stores only its SHA-256 hash in `auth_sessions`. `SessionAuthenticationFilter` resolves `Authorization: Bearer` to an `AuthenticatedUser` (id, phone, role) on each request. It is deliberately not a Spring bean, so it runs only once, through the chain in `SecurityConfig`.
+- Authentication and authorization errors go through `HandlerExceptionResolver` as `ApiException`, so they keep the `ProblemDetail` shape.
+- Controllers that need the caller take `@AuthenticationPrincipal AuthenticatedUser`.
+- Roles live on `registrations.role` (`Role` enum: `USER`, `ADMIN`). Only `Registration.changeRole` and `RegistrationService.changeRole` set them.
+
 **Shared helpers.** `common/PhoneNumbers` normalizes phone numbers for both registrations and checkout customers.
 
-**Schema** (`db/migration/`): V1 registrations, V2 products, V3 orders, order items, and payments. Unique constraints on `orders.razorpay_order_id` and `payments.razorpay_payment_id` back the idempotency logic.
+**Schema** (`db/migration/`): V1 registrations, V2 products, V3 orders, order items, and payments. V4 adds the registration password hash, V5 the registration role, V6 `auth_sessions`, and V7 `orders.registration_id` (the owning customer). Unique constraints on `orders.razorpay_order_id` and `payments.razorpay_payment_id` back the idempotency logic.
 
 **JSON.** The code uses Jackson 3 (`tools.jackson.databind`), not `com.fasterxml`.
 
@@ -220,7 +250,7 @@ Never hard-code secrets in `application.properties`.
 - Use `jakarta.*` imports (Jakarta EE, not `javax.*`).
 - Controllers take DTO records and return `ResponseEntity`. Entities stay inside the service layer. Known exception: `RazorpayWebhookController` calls `StoreOrderRepository` and works with `StoreOrder` directly. Do not copy that pattern into new code.
 - Validation goes on request DTOs with Jakarta Validation annotations (`@Valid`).
-- Schema changes go in a new Flyway migration (V4 and up). Never edit an existing `V*__` file that may have run. `ddl-auto` is `validate`, so entity changes must match the migrations.
+- Schema changes go in a new Flyway migration (V8 and up). Never edit an existing `V*__` file that may have run. `ddl-auto` is `validate`, so entity changes must match the migrations.
 - Keep `spring.jpa.open-in-view=false`.
 - Passwords are stored only as BCrypt hashes (`PasswordEncoder` bean in `config/PasswordConfig`). Never store or log plaintext. Login errors must stay generic ("Invalid phone or password").
 

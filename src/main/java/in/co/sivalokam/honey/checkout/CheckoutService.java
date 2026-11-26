@@ -48,7 +48,7 @@ public class CheckoutService {
      * Prices the cart from the database, checks stock, creates the Razorpay order and stores
      * the internal order. Quantity limits are enforced earlier, by bean validation on the request.
      */
-    public CheckoutOrderResponse createOrder(CheckoutRequest req) {
+    public CheckoutOrderResponse createOrder(CheckoutRequest req, UUID registrationId) {
         List<CheckoutRequest.CartItemRequest> items = req.items();
         Map<String, String> errors = new LinkedHashMap<>();
 
@@ -100,6 +100,7 @@ public class CheckoutService {
         CheckoutRequest.CustomerRequest customer = req.customer();
         StoreOrder order = new StoreOrder(
                 orderId,
+                registrationId,
                 customer.name().strip(),
                 PhoneNumbers.normalize(customer.phone()),
                 blankToNull(customer.email()),
@@ -119,9 +120,13 @@ public class CheckoutService {
                 razorpayOrderId, keyId, CURRENCY, subtotal, discount, total, lines);
     }
 
-    /** Verifies the Razorpay payment signature and records the payment. Safe to call repeatedly. */
-    public VerifyPaymentResponse verifyPayment(VerifyPaymentRequest req) {
+    /**
+     * Verifies the Razorpay payment signature and records the payment. Safe to call repeatedly.
+     * Orders that belong to another customer are reported as not found, so their existence is not revealed.
+     */
+    public VerifyPaymentResponse verifyPayment(VerifyPaymentRequest req, UUID registrationId) {
         StoreOrder order = orders.findById(req.orderId())
+                .filter(o -> o.isOwnedBy(registrationId))
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Order not found"));
 
         if (!order.getRazorpayOrderId().equals(req.razorpayOrderId())) {
