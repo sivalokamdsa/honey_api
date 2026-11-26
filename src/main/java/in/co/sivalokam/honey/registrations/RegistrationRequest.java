@@ -19,6 +19,10 @@ public record RegistrationRequest(
     @Size(max = 80, message = "City must be at most 80 characters")
     String city,
 
+    @NotBlank(message = "Password is required")
+    @Size(min = 8, max = 72, message = "Password must be 8 to 72 characters")
+    String password,
+
     @NotNull(message = "Consent is required")
     @AssertTrue(message = "Please agree before registering")
     Boolean consent

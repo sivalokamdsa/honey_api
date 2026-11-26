@@ -31,16 +31,21 @@ public class Registration {
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
+    @Column(name = "password_hash", length = 100)
+    private String passwordHash;
+
 
     protected Registration() {
         // required by JPA
     }
 
-    public Registration(String fullName, String phone, String email, String city, OffsetDateTime now) {
+    public Registration(String fullName, String phone, String email, String city,
+                        String passwordHash, OffsetDateTime now) {
         this.fullName = fullName;
         this.phone = phone;
         this.email = email;
         this.city = city;
+        this.passwordHash = passwordHash;
         this.consentAt = now;
         this.createdAt = now;
     }
@@ -49,6 +54,7 @@ public class Registration {
     public String getPhone() { return phone; }
     public String getEmail() { return email; }
     public String getCity() { return city; }
+    public String getPasswordHash() { return passwordHash; }
     public OffsetDateTime getConsentAt() { return consentAt; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
 
